@@ -40,6 +40,9 @@ enum Global {
     List,        // builtins/__builtin__.list
     Int,         // builtins/__builtin__.int
     Encode,      // _codecs.encode
+    OrderedDict, // collections.OrderedDict
+    HalfStorage, // torch.HalfStorage
+    RebuildTensor, // torch._utils._rebuild_tensor_v2
     Other,       // anything else (may be a classobj that is later discarded)
 }
 
@@ -939,6 +942,12 @@ impl<R: Read> Deserializer<R> {
                 Value::Global(Global::Bytearray),
             (b"__builtin__", b"int") | (b"builtins", b"int") =>
                 Value::Global(Global::Int),
+            (b"collections", b"OrderedDict") =>
+                Value::Global(Global::OrderedDict),
+            (b"torch", b"HalfStorage") =>
+                Value::Global(Global::HalfStorage),
+            (b"torch._utils", b"_rebuild_tensor_v2") =>
+                Value::Global(Global::RebuildTensor),
             (a, b) => {
                 println!("oh no {:?} {:?}", str::from_utf8(a), str::from_utf8(b));
                 Value::Global(Global::Other)
@@ -1021,6 +1030,15 @@ impl<R: Read> Deserializer<R> {
                     }
                     _ => self.error(ErrorCode::InvalidValue("encode() arg".into())),
                 }
+            }
+            Value::Global(Global::OrderedDict) => {
+                self.stack.push(Value::Dict(vec![]));
+                Ok(())
+            }
+            Value::Global(Global::RebuildTensor) => {
+                println!("rebuild tensor: {:?}", argtuple);
+                self.stack.push(Value::Tuple(argtuple));
+                Ok(())
             }
             Value::Global(Global::Other) => {
                 // Anything else; just keep it on the stack as an opaque object.
