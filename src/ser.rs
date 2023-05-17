@@ -164,6 +164,9 @@ impl<W: io::Write> Serializer<W> {
             },
             Value::FrozenSet(ref s) => {
                 self.serialize_set(s, b"frozenset")
+            },
+            Value::PersistentId(_) => {
+                panic!("TODO(eiz): do the dew")
             }
         }
     }

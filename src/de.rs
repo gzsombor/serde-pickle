@@ -68,6 +68,7 @@ enum Value {
     Set(Vec<Value>),
     FrozenSet(Vec<Value>),
     Dict(Vec<(Value, Value)>),
+    PersistentId(Box<Value>),
 }
 
 /// Options for deserializing.
@@ -499,6 +500,17 @@ impl<R: Read> Deserializer<R> {
                     let state = self.pop()?;
                     self.pop()?;  // remove the object standin
                     self.stack.push(state);
+                }
+
+                // Persistent IDs
+                PERSID => {
+                    let bytes = self.read_line()?;
+                    let pid = self.parse_ascii(bytes)?;
+                    self.stack.push(Value::PersistentId(Box::new(Value::String(pid))));
+                }
+                BINPERSID => {
+                    let value = self.pop()?;
+                    self.stack.push(Value::PersistentId(Box::new(value)));
                 }
 
                 // Unsupported opcodes
@@ -1082,6 +1094,9 @@ impl<R: Read> Deserializer<R> {
                     Err(Error::Syntax(ErrorCode::UnresolvedGlobal))
                 }
             },
+            Value::PersistentId(id) => {
+                Ok(value::Value::PersistentId(Box::new(self.convert_value(*id)?)))
+            },
         }
     }
 }
@@ -1149,6 +1164,10 @@ impl<'de: 'a, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
                     Err(Error::Syntax(ErrorCode::UnresolvedGlobal))
                 }
             },
+            Value::PersistentId(_) => {
+                // TODO(eiz): do the dew
+                visitor.visit_unit()
+            }
         }
     }
 

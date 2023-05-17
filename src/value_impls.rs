@@ -270,6 +270,9 @@ impl<'de: 'a, 'a> de::Deserializer<'de> for &'a mut Deserializer {
                     len,
                 })
             },
+            Value::PersistentId(_) => {
+                panic!("TODO(eiz): do the dew")
+            },
         }
     }
 

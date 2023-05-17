@@ -21,6 +21,8 @@ pub const BININT1          : u8 = b'K';    // push 1-byte unsigned int
 pub const LONG             : u8 = b'L';    // push long; decimal string argument
 pub const BININT2          : u8 = b'M';    // push 2-byte unsigned int
 pub const NONE             : u8 = b'N';    // push None
+pub const PERSID           : u8 = b'P';    // push persistent object; id is taken from string arg
+pub const BINPERSID        : u8 = b'Q';    //  "       "         "  ;  "  "   "     "  stack
 pub const STRING           : u8 = b'S';    // push string; NL-terminated string argument
 pub const BINSTRING        : u8 = b'T';    // push string; counted binary string argument
 pub const SHORT_BINSTRING  : u8 = b'U';    //  "     "   ;    "      "       "      " < 256 bytes
@@ -76,8 +78,6 @@ pub const BYTEARRAY8       : u8 = b'\x96'; // push bytearray
 // pub const READONLY_BUFFER  : u8 = b'\x98'; // make top of stack readonly
 
 // Ops only used for recursive objects; these are unsupported.
-// pub const PERSID           : u8 = b'P';    // push persistent object; id is taken from string arg
-// pub const BINPERSID        : u8 = b'Q';    //  "       "         "  ;  "  "   "     "  stack
 // pub const EXT1             : u8 = b'\x82'; // push object from extension registry; 1-byte index
 // pub const EXT2             : u8 = b'\x83'; // ditto, but 2-byte index
 // pub const EXT4             : u8 = b'\x84'; // ditto, but 4-byte index
