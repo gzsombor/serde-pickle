@@ -500,9 +500,19 @@ impl<R: Read> Deserializer<R> {
                     // The top-of-stack for BUILD is used either as the instance __dict__,
                     // or an argument for __setstate__, in which case it can be *any* type
                     // of object.  In both cases, we just replace the standin.
-                    let state = self.pop()?;
-                    self.pop()?;  // remove the object standin
-                    self.stack.push(state);
+                    // TODO(eiz): so ya, the above doesn't work out for custom dict types...
+                    // this code is wrong'ish but I need Hack Solutions Right Now
+                    let state = self.pop_resolve()?;
+                    let inst = self.pop_resolve()?;
+
+                    match (state, inst) {
+                        (Value::Dict(ref r), Value::Dict(ref l)) => {
+                            self.stack.push(Value::Dict(l.iter().chain(r).map(|x| x.clone()).collect()));
+                        },
+                        (state, _) => {
+                            self.stack.push(state);
+                        }
+                    }
                 }
 
                 // Persistent IDs
@@ -909,7 +919,6 @@ impl<R: Read> Deserializer<R> {
             f(dict);
             Ok(())
         } else {
-            println!("oopsie woopsie {:?}", top);
             Self::stack_error("dict", top, pos)
         }
     }
@@ -948,10 +957,7 @@ impl<R: Read> Deserializer<R> {
                 Value::Global(Global::HalfStorage),
             (b"torch._utils", b"_rebuild_tensor_v2") =>
                 Value::Global(Global::RebuildTensor),
-            (a, b) => {
-                println!("oh no {:?} {:?}", str::from_utf8(a), str::from_utf8(b));
-                Value::Global(Global::Other)
-            }
+            _ => Value::Global(Global::Other),
         };
         Ok(value)
     }
@@ -1036,7 +1042,6 @@ impl<R: Read> Deserializer<R> {
                 Ok(())
             }
             Value::Global(Global::RebuildTensor) => {
-                println!("rebuild tensor: {:?}", argtuple);
                 self.stack.push(Value::Tuple(argtuple));
                 Ok(())
             }
@@ -1109,6 +1114,9 @@ impl<R: Read> Deserializer<R> {
             Value::MemoRef(memo_id) => {
                 self.resolve_recursive(memo_id, (), |slf, (), value| slf.convert_value(value))
             },
+            Value::Global(Global::HalfStorage) => {
+                Ok(value::Value::String("half".into()))
+            },
             Value::Global(_) => {
                 if self.options.replace_unresolved_globals {
                     Ok(value::Value::None)
@@ -1179,6 +1187,12 @@ impl<'de: 'a, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
                     slf.deserialize_any(visitor)
                 })
             },
+            Value::Global(Global::HalfStorage) => {
+                visitor.visit_str("half")
+            },
+            Value::Global(Global::RebuildTensor) => {
+                visitor.visit_str("_rebuild_tensor_v2")
+            }
             Value::Global(_) => {
                 if self.options.replace_unresolved_globals {
                     visitor.visit_unit()
@@ -1186,9 +1200,9 @@ impl<'de: 'a, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
                     Err(Error::Syntax(ErrorCode::UnresolvedGlobal))
                 }
             },
-            Value::PersistentId(_) => {
-                // TODO(eiz): do the dew
-                visitor.visit_unit()
+            Value::PersistentId(v) => {
+                self.value = Some(*v);
+                self.deserialize_any(visitor)
             }
         }
     }

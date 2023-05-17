@@ -182,7 +182,7 @@ impl fmt::Display for Value {
                     }
                 }
                 write!(f, "}}")
-            },
+            }
             Value::PersistentId(ref v) => {
                 write_elements(f, [v].iter(), "persistent_id(", ")", 1, false)
             }
