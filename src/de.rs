@@ -906,6 +906,7 @@ impl<R: Read> Deserializer<R> {
             f(dict);
             Ok(())
         } else {
+            println!("oopsie woopsie {:?}", top);
             Self::stack_error("dict", top, pos)
         }
     }
@@ -938,7 +939,10 @@ impl<R: Read> Deserializer<R> {
                 Value::Global(Global::Bytearray),
             (b"__builtin__", b"int") | (b"builtins", b"int") =>
                 Value::Global(Global::Int),
-            _ => Value::Global(Global::Other),
+            (a, b) => {
+                println!("oh no {:?} {:?}", str::from_utf8(a), str::from_utf8(b));
+                Value::Global(Global::Other)
+            }
         };
         Ok(value)
     }
