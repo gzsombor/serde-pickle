@@ -10,6 +10,7 @@
 //! order to deserialize a pickle stream to `value::Value`, use the
 //! `value_from_*` functions exported here, not the generic `from_*` functions.
 
+use std::fmt;
 use std::io;
 use std::mem;
 use std::str;
@@ -33,7 +34,7 @@ use super::value;
 type MemoId = u32;
 
 #[derive(Clone, Debug, PartialEq)]
-enum Global {
+pub enum Global {
     Set,         // builtins/__builtin__.set
     Frozenset,   // builtins/__builtin__.frozenset
     Bytearray,   // builtins/__builtin__.bytearray
@@ -41,9 +42,22 @@ enum Global {
     Int,         // builtins/__builtin__.int
     Encode,      // _codecs.encode
     OrderedDict, // collections.OrderedDict
-    HalfStorage, // torch.HalfStorage
-    RebuildTensor, // torch._utils._rebuild_tensor_v2
-    Other,       // anything else (may be a classobj that is later discarded)
+    Other(String, String),       // anything else (may be a classobj that is later discarded)
+}
+
+impl fmt::Display for Global {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match &*self {
+            Global::Set => write!(fmt, "Set"),
+            Global::Frozenset => write!(fmt, "Frozenset"),
+            Global::Bytearray => write!(fmt, "Bytearray"),
+            Global::List => write!(fmt, "List"),
+            Global::Int => write!(fmt, "Int"),
+            Global::Encode => write!(fmt, "Encode"),
+            Global::OrderedDict => write!(fmt, "OrderedDict"),
+            Global::Other(globname, modname) => write!(fmt, "Other (globname={},modname={})", globname, modname),
+        }
+    }
 }
 
 /// Our intermediate representation of a value.
@@ -72,6 +86,7 @@ enum Value {
     FrozenSet(Vec<Value>),
     Dict(Vec<(Value, Value)>),
     PersistentId(Box<Value>),
+    ReducedGlobal(Global, Vec<Value>),
 }
 
 /// Options for deserializing.
@@ -79,6 +94,7 @@ enum Value {
 pub struct DeOptions {
     decode_strings: bool,
     replace_unresolved_globals: bool,
+    replace_globals_to_tuples: bool,
 }
 
 impl DeOptions {
@@ -101,6 +117,14 @@ impl DeOptions {
         self.replace_unresolved_globals = true;
         self
     }
+
+    /// Activate replacing unresolved globals by `Tuple(globname, modname)`.
+    pub fn replace_globals_to_tuples(mut self) -> Self {
+        self.replace_globals_to_tuples = true;
+        self.replace_unresolved_globals = true;
+        self
+    }
+
 }
 
 /// Decodes pickle streams into values.
@@ -953,11 +977,7 @@ impl<R: Read> Deserializer<R> {
                 Value::Global(Global::Int),
             (b"collections", b"OrderedDict") =>
                 Value::Global(Global::OrderedDict),
-            (b"torch", b"HalfStorage") =>
-                Value::Global(Global::HalfStorage),
-            (b"torch._utils", b"_rebuild_tensor_v2") =>
-                Value::Global(Global::RebuildTensor),
-            _ => Value::Global(Global::Other),
+            _ => Value::Global(Global::Other(String::from_utf8(modname)?, String::from_utf8(globname)?)),
         };
         Ok(value)
     }
@@ -1041,15 +1061,11 @@ impl<R: Read> Deserializer<R> {
                 self.stack.push(Value::Dict(vec![]));
                 Ok(())
             }
-            Value::Global(Global::RebuildTensor) => {
-                self.stack.push(Value::Tuple(argtuple));
-                Ok(())
-            }
-            Value::Global(Global::Other) => {
+            Value::Global(global) => {
                 // Anything else; just keep it on the stack as an opaque object.
                 // If it is a class object, it will get replaced later when the
                 // class is instantiated.
-                self.stack.push(Value::Global(Global::Other));
+                self.stack.push(Value::ReducedGlobal(global, argtuple));
                 Ok(())
             }
             other => Self::stack_error("global reference", &other, self.pos),
@@ -1114,14 +1130,33 @@ impl<R: Read> Deserializer<R> {
             Value::MemoRef(memo_id) => {
                 self.resolve_recursive(memo_id, (), |slf, (), value| slf.convert_value(value))
             },
-            Value::Global(Global::HalfStorage) => {
-                Ok(value::Value::String("half".into()))
-            },
-            Value::Global(_) => {
+            Value::Global(global) => {
                 if self.options.replace_unresolved_globals {
-                    Ok(value::Value::None)
+                    if self.options.replace_globals_to_tuples {
+                        match global {
+                            Global::Other(a, b) => Ok(value::Value::Tuple(vec![value::Value::String(a), value::Value::String(b)])),
+                            _ => Ok(value::Value::None)
+                        }
+                    } else {
+                        Ok(value::Value::None)
+                    }
                 } else {
-                    Err(Error::Syntax(ErrorCode::UnresolvedGlobal))
+                    Err(Error::Syntax(ErrorCode::UnresolvedGlobal(global)))
+                }
+            },
+            Value::ReducedGlobal(global, arguments) => {
+                if self.options.replace_unresolved_globals {
+                    if self.options.replace_globals_to_tuples {
+                        let converted_args = arguments.iter().map(|v| self.convert_value(v.clone()).ok()).flatten().collect::<Vec<_>>();
+                        match global {
+                            Global::Other(a, b) => Ok(value::Value::Tuple(vec![value::Value::String(a), value::Value::String(b), value::Value::Tuple(converted_args)])),
+                            _ => Ok(value::Value::None)
+                        }
+                    } else {
+                        Ok(value::Value::None)
+                    }
+                } else {
+                    Err(Error::Syntax(ErrorCode::UnresolvedGlobal(global)))
                 }
             },
             Value::PersistentId(id) => {
@@ -1187,17 +1222,18 @@ impl<'de: 'a, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
                     slf.deserialize_any(visitor)
                 })
             },
-            Value::Global(Global::HalfStorage) => {
-                visitor.visit_str("half")
-            },
-            Value::Global(Global::RebuildTensor) => {
-                visitor.visit_str("_rebuild_tensor_v2")
-            }
-            Value::Global(_) => {
+            Value::Global(global) => {
                 if self.options.replace_unresolved_globals {
                     visitor.visit_unit()
                 } else {
-                    Err(Error::Syntax(ErrorCode::UnresolvedGlobal))
+                    Err(Error::Syntax(ErrorCode::UnresolvedGlobal(global)))
+                }
+            },
+            Value::ReducedGlobal(global, _) => {
+                if self.options.replace_unresolved_globals {
+                    visitor.visit_unit()
+                } else {
+                    Err(Error::Syntax(ErrorCode::UnresolvedGlobal(global)))
                 }
             },
             Value::PersistentId(v) => {

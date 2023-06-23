@@ -11,6 +11,7 @@ use std::io;
 use std::error;
 use std::result;
 use serde::{ser, de};
+use crate::de::Global;
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum ErrorCode {
@@ -31,7 +32,7 @@ pub enum ErrorCode {
     /// Recursive structure found, which we don't support
     Recursive,
     /// A "module global" reference wasn't resolved by REDUCE
-    UnresolvedGlobal,
+    UnresolvedGlobal(Global),
     /// A "module global" isn't supported
     UnsupportedGlobal(Vec<u8>, Vec<u8>),
     /// A value was missing from the memo
@@ -58,7 +59,7 @@ impl fmt::Display for ErrorCode {
                 write!(fmt, "invalid stack top, expected {}, got {}", what, it),
             ErrorCode::ValueNotHashable => write!(fmt, "dict key or set item not hashable"),
             ErrorCode::Recursive => write!(fmt, "recursive structure found"),
-            ErrorCode::UnresolvedGlobal => write!(fmt, "unresolved global reference"),
+            ErrorCode::UnresolvedGlobal(ref global) => write!(fmt, "unresolved global reference: {}", global),
             ErrorCode::UnsupportedGlobal(ref m, ref g) =>
                 write!(fmt, "unsupported global: {}.{}",
                        String::from_utf8_lossy(m), String::from_utf8_lossy(g)),
@@ -82,11 +83,19 @@ pub enum Error {
     Eval(ErrorCode, usize),
     /// Syntax error while transforming into Rust values.
     Syntax(ErrorCode),
+    /// Decoding a byte array into String failed. 
+    Utf8Error(std::str::Utf8Error),
 }
 
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Error {
         Error::Io(error)
+    }
+}
+
+impl From<std::string::FromUtf8Error> for Error {
+    fn from(error: std::string::FromUtf8Error) -> Error {
+        Error::Utf8Error(error.utf8_error())
     }
 }
 
@@ -98,7 +107,8 @@ impl fmt::Display for Error {
             Error::Io(ref error) => error.fmt(fmt),
             Error::Eval(ref code, offset) => write!(fmt, "eval error at offset {}: {}",
                                                     offset, code),
-            Error::Syntax(ref code) => write!(fmt, "decoding error: {}", code)
+            Error::Syntax(ref code) => write!(fmt, "decoding error: {}", code),
+            Error::Utf8Error(ref error) => error.fmt(fmt),
         }
     }
 }
